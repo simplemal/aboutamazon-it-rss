@@ -97,6 +97,7 @@ def extract_article(url):
 def build_feed(items, out_path="docs/feed.xml"):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fg = FeedGenerator()
+    fg.load_extension('content')  # abilita content:encoded
     fg.id("aboutamazon-it-news")
     fg.title("About Amazon Italia — Notizie (feed non ufficiale)")
     fg.description("Feed non ufficiale con contenuto completo degli articoli da About Amazon Italia (aboutamazon.it).")
@@ -114,13 +115,19 @@ def build_feed(items, out_path="docs/feed.xml"):
         fe.guid(guid, permalink=False)
         fe.title(it["title"])
         fe.link(href=it["link"])
+
+        # <description> breve
         summary = ""
         if it.get("text_plain"):
             summary = it["text_plain"].split("\n", 1)[0][:300]
         fe.description(summary or it["title"])
+
+        # <content:encoded> con HTML completo
+        if it.get("content_html"):
+            fe.content(it["content_html"])
+
         if it.get("pub_dt"):
             fe.pubDate(it["pub_dt"])
-        fe.content(it["content_html"], type="CDATA")
 
     fg.rss_str(pretty=True)
     fg.rss_file(out_path, pretty=True)
