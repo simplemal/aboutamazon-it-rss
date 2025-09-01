@@ -219,7 +219,7 @@ def extract_article(url: str):
         return None
 
 def build_feed(items, out_path="docs/feed.xml"):
-    """Build RSS feed with proper encoding"""
+    """Build RSS feed with proper encoding and Feedly-compatible format"""
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
 
     fg = FeedGenerator()
@@ -227,9 +227,9 @@ def build_feed(items, out_path="docs/feed.xml"):
     fg.title("About Amazon Italia — Notizie (feed non ufficiale)")
     fg.description("Feed non ufficiale con contenuto completo degli articoli da About Amazon Italia (aboutamazon.it).")
     
-    # Self link to the feed
+    # Self link to the feed (required for Feedly)
     fg.link(href="https://simplemal.github.io/aboutamazon-it-rss/feed.xml", rel="self")
-    # Website link
+    # Website link (required)
     fg.link(href=BASE_LIST)
     
     fg.language("it")
@@ -238,30 +238,45 @@ def build_feed(items, out_path="docs/feed.xml"):
     fg.docs("http://www.rssboard.org/rss-specification")
     fg.generator("python-feedgen")
 
+    # Add required elements for better compatibility
+    fg.managingEditor("noreply@aboutamazon.it (About Amazon Italia)")
+    fg.webMaster("noreply@aboutamazon.it (About Amazon Italia)")
+
     for item in items:
         fe = fg.add_entry()
         
-        # Use a hash of the URL as GUID
-        guid_hash = hashlib.sha1(item["link"].encode('utf-8')).hexdigest()
-        fe.guid(guid_hash, permalink=False)
+        # Use the URL itself as GUID (permalink=True is better for Feedly)
+        fe.guid(item["link"], permalink=True)
         
         fe.title(item["title"])
         fe.link(href=item["link"])
         
-        # Format content as HTML paragraph
+        # Format content for better display
         description = item.get("content", "")
         if len(description) > 50000:
             description = description[:50000] + "..."
         
-        # Wrap in paragraph tags for better display
-        fe.description(f'<p>{html.escape(description)}</p>')
+        # Clean description without extra HTML tags - some readers prefer plain text
+        fe.description(description)
         
         fe.pubDate(item["pub_dt"])
+        
+        # Add author if possible
+        fe.author(email="noreply@aboutamazon.it", name="About Amazon Italia")
 
-    # Write with explicit UTF-8 encoding
+    # Generate RSS and add custom elements for better compatibility
     rss_str = fg.rss_str(pretty=True)
-    with open(out_path, 'wb') as f:
-        f.write(rss_str)
+    
+    # Decode to string to modify it
+    rss_content = rss_str.decode('utf-8')
+    
+    # Ensure proper RSS 2.0 declaration and add missing elements
+    if '<?xml version' not in rss_content:
+        rss_content = '<?xml version="1.0" encoding="UTF-8"?>\n' + rss_content
+    
+    # Write with explicit UTF-8 encoding
+    with open(out_path, 'w', encoding='utf-8') as f:
+        f.write(rss_content)
 
 def main():
     """Main execution function"""
