@@ -117,7 +117,7 @@ def get_known_articles():
     ]
 
 def extract_article(url: str):
-    """Extract article content with better error handling"""
+    """Extract article content with better error handling and image extraction"""
     try:
         html = fetch(url)
         soup = BeautifulSoup(html, "html.parser")
@@ -130,7 +130,8 @@ def extract_article(url: str):
             include_tables=True,
             no_fallback=False,
             favor_precision=True,
-            deduplicate=True
+            deduplicate=True,
+            include_images=True  # Enable image extraction
         )
 
         # Title extraction
@@ -161,18 +162,39 @@ def extract_article(url: str):
         if not title:
             title = "Articolo da About Amazon Italia"
 
-        # Content processing
+        # Enhanced content processing with images
         content = ""
+        images = []
+        
+        # Extract images from the article
+        article_elem = soup.find("article") or soup.find("main") or soup.find("div", class_="content")
+        if article_elem:
+            # Find images in the article
+            img_tags = article_elem.find_all("img")
+            for img in img_tags:
+                src = img.get("src") or img.get("data-src")
+                if src:
+                    # Convert relative URLs to absolute
+                    img_url = urljoin(url, src)
+                    alt_text = img.get("alt", "")
+                    images.append({"url": img_url, "alt": alt_text})
+
         if extracted:
             content = sanitize_xml(extracted.strip())
         else:
             # Fallback: look for article content
-            article_elem = soup.find("article") or soup.find("main") or soup.find("div", class_="content")
             if article_elem:
-                # Remove unwanted elements
+                # Remove unwanted elements but keep images info
                 for unwanted in article_elem.find_all(["nav", "footer", "aside", "header", "script", "style"]):
                     unwanted.decompose()
                 content = sanitize_xml(article_elem.get_text(strip=True))
+
+        # Add images to content if found
+        if images:
+            img_html = ""
+            for img_data in images[:3]:  # Limit to first 3 images
+                img_html += f'<img src="{html.escape(img_data["url"])}" alt="{html.escape(img_data["alt"])}" style="max-width:100%;height:auto;"><br>'
+            content = img_html + content
 
         if not content:
             content = f"Leggi l'articolo completo su: {url}"
@@ -212,6 +234,7 @@ def extract_article(url: str):
             "link": url,
             "content": content,
             "pub_dt": pub_dt,
+            "images": images
         }
         
     except Exception as e:
@@ -251,18 +274,38 @@ def build_feed(items, out_path="docs/feed.xml"):
         fe.title(item["title"])
         fe.link(href=item["link"])
         
-        # Format content for better display
+        # Format content with HTML for images
         description = item.get("content", "")
         if len(description) > 50000:
             description = description[:50000] + "..."
         
-        # Clean description without extra HTML tags - some readers prefer plain text
-        fe.description(description)
+        # If content already contains HTML (images), keep it as HTML
+        # Otherwise wrap in paragraph tags
+        if '<img' in description or '<br>' in description:
+            # Content already has HTML from images - use as is
+            fe.description(description)
+        else:
+            # Plain text content - wrap in paragraph
+            fe.description(f'<p>{html.escape(description)}</p>')
         
         fe.pubDate(item["pub_dt"])
         
         # Add author if possible
         fe.author(email="noreply@aboutamazon.it", name="About Amazon Italia")
+        
+        # Add enclosure for first image if available
+        if item.get("images") and len(item["images"]) > 0:
+            first_img = item["images"][0]
+            try:
+                # Try to get image info for enclosure
+                img_response = requests.head(first_img["url"], timeout=5)
+                if img_response.status_code == 200:
+                    content_type = img_response.headers.get('content-type', 'image/jpeg')
+                    content_length = img_response.headers.get('content-length', '0')
+                    fe.enclosure(first_img["url"], content_length, content_type)
+            except:
+                # Skip enclosure if can't get image info
+                pass
 
     # Generate RSS and add custom elements for better compatibility
     rss_str = fg.rss_str(pretty=True)
