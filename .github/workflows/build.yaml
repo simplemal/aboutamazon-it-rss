@@ -27,8 +27,10 @@ jobs:
 
       - name: Set SELF_FEED_URL
         run: |
-          echo "SELF_FEED_URL=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/feed.xml" >> $GITHUB_ENV
-
+          repo_name="${GITHUB_REPOSITORY##*/}"
+          owner_name="${GITHUB_REPOSITORY%%/*}"
+          echo "SELF_FEED_URL=https://${owner_name}.github.io/${repo_name}/feed.xml" >> $GITHUB_ENV
+          
       - name: Build feed
         run: |
           python feed_builder.py
