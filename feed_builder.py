@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 import trafilatura
 from feedgen.feed import FeedGenerator
 from urllib.parse import urljoin
-from datetime import datetime
+from datetime import datetime, timezone
 from dateutil import parser as dateparser
 
 BASE_LIST = "https://www.aboutamazon.it/notizie"
@@ -26,8 +26,6 @@ def list_articles():
     html = fetch(BASE_LIST)
     soup = BeautifulSoup(html, "html.parser")
     urls = set()
-
-    # Selettori generici per card/articoli in lista
     for a in soup.select('a[href*="/notizie/"]'):
         href = a.get("href", "").strip()
         if not href:
@@ -35,19 +33,14 @@ def list_articles():
         if href.startswith("#") or href.startswith("javascript:"):
             continue
         full = urljoin(BASE_URL, href)
-        # escludi tag, ricerche, ecc.
         if "/tag/" in full or "/search" in full:
             continue
         urls.add(full)
-
-    # Ordine deterministico
     return sorted(urls)
 
 def extract_article(url):
     html = fetch(url)
-    downloaded = trafilatura.fetch_url(url, no_ssl=True)
-    text = trafilatura.extract(downloaded) if downloaded else None
-
+    text = trafilatura.extract(html, url=url)
     soup = BeautifulSoup(html, "html.parser")
 
     title = None
@@ -90,12 +83,15 @@ def extract_article(url):
                 pub_dt = None
             break
 
+    pub_dt_aware = (pub_dt.astimezone(timezone.utc) if (pub_dt and pub_dt.tzinfo)
+                    else (pub_dt.replace(tzinfo=timezone.utc) if pub_dt else datetime.now(timezone.utc)))
+
     return {
         "title": title,
         "link": url,
         "content_html": content_html,
         "text_plain": text_plain,
-        "pub_dt": pub_dt or datetime.utcnow(),
+        "pub_dt": pub_dt_aware,
     }
 
 def build_feed(items, out_path="docs/feed.xml"):
@@ -105,29 +101,25 @@ def build_feed(items, out_path="docs/feed.xml"):
     fg.title("About Amazon Italia — Notizie (feed non ufficiale)")
     fg.description("Feed non ufficiale con contenuto completo degli articoli da About Amazon Italia (aboutamazon.it).")
     fg.link(href=BASE_LIST, rel="alternate")
-    
     self_url = os.getenv("SELF_FEED_URL", "https://example.invalid/feed.xml")
     fg.link(href=self_url, rel="self")
     fg.language("it")
-    fg.lastBuildDate(datetime.utcnow())
+    fg.lastBuildDate(datetime.now(timezone.utc))
     fg.ttl(60)
 
     for it in items:
         fe = fg.add_entry()
-        fe.id(hashlib.sha1(it["link"].encode("utf-8")).hexdigest())
-        fe.guid(hashlib.sha1(it["link"].encode("utf-8")).hexdigest(), permalink=False)
+        guid = hashlib.sha1(it["link"].encode("utf-8")).hexdigest()
+        fe.id(guid)
+        fe.guid(guid, permalink=False)
         fe.title(it["title"])
         fe.link(href=it["link"])
-    
-        # descrizione breve (prima riga del testo)
         summary = ""
         if it.get("text_plain"):
             summary = it["text_plain"].split("\n", 1)[0][:300]
         fe.description(summary or it["title"])
-    
         if it.get("pub_dt"):
             fe.pubDate(it["pub_dt"])
-    
         fe.content(it["content_html"], type="CDATA")
 
     fg.rss_str(pretty=True)
@@ -135,17 +127,15 @@ def build_feed(items, out_path="docs/feed.xml"):
 
 def main():
     urls = list_articles()
-    # Limita a 20–30 articoli per performance
     urls = urls[:30]
-
     items = []
     for u in urls:
         try:
             items.append(extract_article(u))
-            time.sleep(1.0)  # cortesia
+            time.sleep(1.0)
         except Exception:
             continue
-
+    items.sort(key=lambda x: x["pub_dt"], reverse=True)
     build_feed(items)
 
 if __name__ == "__main__":
