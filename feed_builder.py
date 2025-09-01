@@ -162,39 +162,87 @@ def extract_article(url: str):
         if not title:
             title = "Articolo da About Amazon Italia"
 
-        # Enhanced content processing with images
-        content = ""
+        # Enhanced image extraction - check multiple sources
         images = []
         
-        # Extract images from the article
-        article_elem = soup.find("article") or soup.find("main") or soup.find("div", class_="content")
-        if article_elem:
-            # Find images in the article
-            img_tags = article_elem.find_all("img")
-            for img in img_tags:
-                src = img.get("src") or img.get("data-src")
-                if src:
-                    # Convert relative URLs to absolute
-                    img_url = urljoin(url, src)
-                    alt_text = img.get("alt", "")
-                    images.append({"url": img_url, "alt": alt_text})
+        # 1. Try Open Graph image first (most reliable)
+        og_image = soup.find("meta", property="og:image")
+        if og_image and og_image.get("content"):
+            img_url = og_image["content"].strip()
+            if img_url:
+                images.append({"url": img_url, "alt": "Immagine articolo"})
+                print(f"Found OG image: {img_url}")
 
+        # 2. Try Twitter Card image
+        if not images:
+            twitter_image = soup.find("meta", {"name": "twitter:image"}) or soup.find("meta", property="twitter:image")
+            if twitter_image and twitter_image.get("content"):
+                img_url = twitter_image["content"].strip()
+                if img_url:
+                    images.append({"url": img_url, "alt": "Immagine articolo"})
+                    print(f"Found Twitter image: {img_url}")
+
+        # 3. Look for images in JSON-LD structured data
+        if not images:
+            json_scripts = soup.find_all("script", type="application/ld+json")
+            for script in json_scripts:
+                try:
+                    data = json.loads(script.string or "")
+                    if isinstance(data, dict):
+                        # Look for image in different JSON-LD structures
+                        img_url = None
+                        if "image" in data:
+                            if isinstance(data["image"], str):
+                                img_url = data["image"]
+                            elif isinstance(data["image"], dict) and "url" in data["image"]:
+                                img_url = data["image"]["url"]
+                            elif isinstance(data["image"], list) and len(data["image"]) > 0:
+                                if isinstance(data["image"][0], str):
+                                    img_url = data["image"][0]
+                                elif isinstance(data["image"][0], dict) and "url" in data["image"][0]:
+                                    img_url = data["image"][0]["url"]
+                        
+                        if img_url:
+                            images.append({"url": img_url, "alt": "Immagine articolo"})
+                            print(f"Found JSON-LD image: {img_url}")
+                            break
+                except json.JSONDecodeError:
+                    continue
+
+        # 4. Look for images in the article content (fallback)
+        if not images:
+            article_elem = soup.find("article") or soup.find("main") or soup.find("div", class_="content")
+            if article_elem:
+                # Find images in the article
+                img_tags = article_elem.find_all("img")
+                for img in img_tags[:3]:  # Limit to first 3 images
+                    src = img.get("src") or img.get("data-src") or img.get("data-lazy-src")
+                    if src:
+                        # Convert relative URLs to absolute
+                        img_url = urljoin(url, src)
+                        alt_text = img.get("alt", "")
+                        images.append({"url": img_url, "alt": alt_text})
+                        print(f"Found article image: {img_url}")
+
+        # Enhanced content processing
+        content = ""
         if extracted:
             content = sanitize_xml(extracted.strip())
         else:
             # Fallback: look for article content
+            article_elem = soup.find("article") or soup.find("main") or soup.find("div", class_="content")
             if article_elem:
                 # Remove unwanted elements but keep images info
                 for unwanted in article_elem.find_all(["nav", "footer", "aside", "header", "script", "style"]):
                     unwanted.decompose()
                 content = sanitize_xml(article_elem.get_text(strip=True))
 
-        # Add images to content if found
+        # Add main image to content if found
         if images:
-            img_html = ""
-            for img_data in images[:3]:  # Limit to first 3 images
-                img_html += f'<img src="{html.escape(img_data["url"])}" alt="{html.escape(img_data["alt"])}" style="max-width:100%;height:auto;"><br>'
+            main_img = images[0]  # Use the first (most important) image
+            img_html = f'<img src="{html.escape(main_img["url"])}" alt="{html.escape(main_img["alt"])}" style="max-width:100%;height:auto;margin-bottom:15px;"><br>'
             content = img_html + content
+            print(f"Added main image to content: {main_img['url'][:80]}...")
 
         if not content:
             content = f"Leggi l'articolo completo su: {url}"
