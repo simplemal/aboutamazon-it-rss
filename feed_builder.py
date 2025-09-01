@@ -272,12 +272,15 @@ def extract_article(url: str):
                     unwanted.decompose()
                 content = sanitize_xml(article_elem.get_text(strip=True))
 
-        # Add main image to content if found
+        # Add main image to content if found + debug info
+        debug_info = f"[DEBUG: Found {len(images)} images for {url}] "
         if images:
             main_img = images[0]  # Use the first (most important) image
             img_html = f'<img src="{html.escape(main_img["url"])}" alt="{html.escape(main_img["alt"])}" style="max-width:100%;height:auto;margin-bottom:15px;"><br>'
-            content = img_html + content
-            print(f"Added main image to content: {main_img['url'][:80]}...")
+            debug_info += f"Main image: {main_img['url'][:100]}... "
+            content = img_html + debug_info + content
+        else:
+            content = debug_info + content
 
         if not content:
             content = f"Leggi l'articolo completo su: {url}"
