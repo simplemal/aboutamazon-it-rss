@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import re
 import time
 import hashlib
 import requests
@@ -11,13 +12,21 @@ from datetime import datetime, timezone
 from dateutil import parser as dateparser
 
 BASE_LIST = "https://www.aboutamazon.it/notizie"
-BASE_URL = "https://www.aboutamazon.it"
+BASE_URL  = "https://www.aboutamazon.it"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; AboutAmazonIT-RSS/1.0)"
 }
 
-def fetch(url):
+# Rimuove caratteri non validi per XML 1.0 (controlli)
+_XML_INVALID_RE = re.compile(r"[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD]")
+
+def sanitize_xml(text: str) -> str:
+    if not text:
+        return ""
+    return _XML_INVALID_RE.sub("", text)
+
+def fetch(url: str) -> str:
     r = requests.get(url, headers=HEADERS, timeout=20)
     r.raise_for_status()
     return r.text
@@ -27,10 +36,8 @@ def list_articles():
     soup = BeautifulSoup(html, "html.parser")
     urls = set()
     for a in soup.select('a[href*="/notizie/"]'):
-        href = a.get("href", "").strip()
-        if not href:
-            continue
-        if href.startswith("#") or href.startswith("javascript:"):
+        href = (a.get("href") or "").strip()
+        if not href or href.startswith("#") or href.startswith("javascript:"):
             continue
         full = urljoin(BASE_URL, href)
         if "/tag/" in full or "/search" in full:
@@ -38,34 +45,36 @@ def list_articles():
         urls.add(full)
     return sorted(urls)
 
-def extract_article(url):
+def extract_article(url: str):
     html = fetch(url)
     text = trafilatura.extract(html, url=url)
     soup = BeautifulSoup(html, "html.parser")
 
+    # Titolo
     title = None
-    el = soup.find("h1")
-    if el:
-        title = el.get_text(strip=True)
+    h1 = soup.find("h1")
+    if h1:
+        title = h1.get_text(strip=True)
     if not title:
         og = soup.find("meta", property="og:title")
         if og and og.get("content"):
             title = og["content"].strip()
     if not title:
         title = url
+    title = sanitize_xml(title)
 
-    content_html = None
-    text_plain = None
+    # Contenuto
     if text:
-        text_plain = text.strip()
+        text_plain = sanitize_xml(text.strip())
         paras = [f"<p>{p.strip()}</p>" for p in text_plain.split("\n") if p.strip()]
         content_html = "\n".join(paras)
     else:
         first_p = soup.find("p")
-        txt = first_p.get_text(strip=True) if first_p else ""
+        txt = sanitize_xml(first_p.get_text(strip=True) if first_p else "")
         text_plain = txt
         content_html = f"<p>{txt}</p>"
 
+    # Data
     pub_dt = None
     for sel in [
         ('meta', {"property": "article:published_time"}),
@@ -76,7 +85,7 @@ def extract_article(url):
         tag = soup.find(*sel)
         if tag:
             raw = tag.get("datetime") if tag.name == "time" else tag.get("content")
-            raw = raw or tag.get_text(strip=True)
+            raw = (raw or tag.get_text(strip=True) or "").strip()
             try:
                 pub_dt = dateparser.parse(raw)
             except Exception:
@@ -96,40 +105,52 @@ def extract_article(url):
 
 def build_feed(items, out_path="docs/feed.xml"):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
+
     fg = FeedGenerator()
+    fg.load_extension('atom')  # per atom:link rel="self"
+
+    # Canale
     fg.id("aboutamazon-it-news")
     fg.title("About Amazon Italia — Notizie (feed non ufficiale)")
     fg.description("Feed non ufficiale con contenuto completo degli articoli da About Amazon Italia (aboutamazon.it).")
 
-    # Channel <link> (obbligatorio in RSS 2.0) + atom:link self
-    fg.link(href=BASE_LIST)
+    # Channel <link> deve puntare al sito, NON al feed
+    fg.link(href=BASE_LIST)  # obbligatorio in RSS 2.0
+
+    # atom:link self con type per i validator più severi
     self_url = os.getenv("SELF_FEED_URL", "https://example.invalid/feed.xml")
-    fg.link(href=self_url, rel="self")
+    fg.link(href=self_url, rel="self", type="application/rss+xml")
 
     fg.language("it")
     fg.lastBuildDate(datetime.now(timezone.utc))
     fg.ttl(60)
+    fg.docs("https://www.rssboard.org/rss-specification")
+    fg.generator("python-feedgen")
 
     for it in items:
         fe = fg.add_entry()
-        guid = hashlib.sha1(it["link"].encode("utf-8")).hexdigest()
-        fe.id(guid)
-        fe.guid(guid, permalink=False)
+
+        # Usa il permalink come GUID per evitare l'attributo mancante
+        fe.guid(it["link"], permalink=True)
+
         fe.title(it["title"])
         fe.link(href=it["link"])
 
-        # Usa <description> con l'HTML completo (compatibile con RSS 2.0)
-        fe.description(it["content_html"] or it["title"])
+        # Descrizione breve (testo semplice, max ~300)
+        summary = (it.get("text_plain") or "").split("\n", 1)[0]
+        summary = sanitize_xml(summary)[:300]
+        fe.description(summary or it["title"])
 
         if it.get("pub_dt"):
             fe.pubDate(it["pub_dt"])
 
-    fg.rss_str(pretty=True)
+        # Se vuoi inserire anche l'HTML completo, decommenta la riga seguente:
+        # fe.content(it["content_html"])
+
     fg.rss_file(out_path, pretty=True)
 
 def main():
-    urls = list_articles()
-    urls = urls[:30]
+    urls = list_articles()[:30]
     items = []
     for u in urls:
         try:
