@@ -1,0 +1,12 @@
+# Force correct MIME type for RSS feeds
+<Files "feed.xml">
+    ForceType application/rss+xml
+</Files>
+
+# Set charset for XML files
+AddCharset UTF-8 .xml
+
+# Enable CORS for feed readers
+<Files "*.xml">
+    Header set Access-Control-Allow-Origin "*"
+</Files>
