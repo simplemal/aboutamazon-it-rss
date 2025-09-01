@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import os
 import time
 import hashlib
 import requests
@@ -94,10 +95,13 @@ def extract_article(url):
     }
 
 def build_feed(items, out_path="docs/feed.xml"):
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fg = FeedGenerator()
-    fg.load_extension('podcast')  # harmless se non usata
     fg.id("aboutamazon-it-news")
     fg.title("About Amazon Italia — Notizie (feed non ufficiale)")
+    fg.description("Feed non ufficiale con contenuto completo degli articoli da About Amazon Italia (aboutamazon.it).")
+    self_url = os.getenv("SELF_FEED_URL", "https://example.invalid/feed.xml")
+    fg.link(href=self_url, rel="self")
     fg.link(href=BASE_LIST, rel="alternate")
     fg.link(href="https://example.invalid", rel="self")  # aggiornato dal workflow se vuoi
     fg.language("it")
