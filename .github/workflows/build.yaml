@@ -25,6 +25,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Set SELF_FEED_URL
+        run: |
+          echo "SELF_FEED_URL=https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/feed.xml" >> $GITHUB_ENV
+
       - name: Build feed
         run: |
           python feed_builder.py
