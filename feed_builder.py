@@ -97,13 +97,15 @@ def extract_article(url):
 def build_feed(items, out_path="docs/feed.xml"):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     fg = FeedGenerator()
-    fg.load_extension('content')  # abilita content:encoded
     fg.id("aboutamazon-it-news")
     fg.title("About Amazon Italia — Notizie (feed non ufficiale)")
     fg.description("Feed non ufficiale con contenuto completo degli articoli da About Amazon Italia (aboutamazon.it).")
-    fg.link(href=BASE_LIST, rel="alternate")
+
+    # Channel <link> (obbligatorio in RSS 2.0) + atom:link self
+    fg.link(href=BASE_LIST)
     self_url = os.getenv("SELF_FEED_URL", "https://example.invalid/feed.xml")
     fg.link(href=self_url, rel="self")
+
     fg.language("it")
     fg.lastBuildDate(datetime.now(timezone.utc))
     fg.ttl(60)
@@ -116,15 +118,8 @@ def build_feed(items, out_path="docs/feed.xml"):
         fe.title(it["title"])
         fe.link(href=it["link"])
 
-        # <description> breve
-        summary = ""
-        if it.get("text_plain"):
-            summary = it["text_plain"].split("\n", 1)[0][:300]
-        fe.description(summary or it["title"])
-
-        # <content:encoded> con HTML completo
-        if it.get("content_html"):
-            fe.content(it["content_html"])
+        # Usa <description> con l'HTML completo (compatibile con RSS 2.0)
+        fe.description(it["content_html"] or it["title"])
 
         if it.get("pub_dt"):
             fe.pubDate(it["pub_dt"])
